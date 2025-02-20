@@ -1,5 +1,5 @@
-//go:build !linux
-// +build !linux
+//go:build !linux && !fallocate
+// +build !linux,!fallocate
 
 /*
  * SPDX-FileCopyrightText: © Hypermode Inc. <hello@hypermode.com>
@@ -26,4 +26,12 @@ func (m *MmapFile) Truncate(maxSz int64) error {
 	var err error
 	m.Data, err = Mmap(m.Fd, true, maxSz) // Mmap up to max size.
 	return err
+}
+
+
+ // Truncate would truncate the mmapped file to the given size. On Linux, we truncate
+ // the underlying file and then call mremap, but on other systems, we unmap first,
+ // then truncate, then re-map.
+ func (m *MmapFile) Allocate(maxSz int64) error {
+	return m.Truncate(maxSz)
 }

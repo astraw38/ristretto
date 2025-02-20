@@ -136,7 +136,7 @@ func (m *MmapFile) AllocateSlice(sz, offset int) ([]byte, int, error) {
 		if growBy < sz+4 {
 			growBy = sz + 4
 		}
-		if err := m.Truncate(int64(len(m.Data) + growBy)); err != nil {
+		if err := m.Allocate(int64(len(m.Data) + growBy)); err != nil {
 			return nil, 0, err
 		}
 	}

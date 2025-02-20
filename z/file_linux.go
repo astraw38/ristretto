@@ -24,3 +24,10 @@ func (m *MmapFile) Truncate(maxSz int64) error {
 	m.Data, err = mremap(m.Data, int(maxSz)) // Mmap up to max size.
 	return err
 }
+
+
+// Allocate explicitly allocates the given size for our mmapped file. For non-fallocate builds
+// this thin provisions via truncate. 
+ func (m *MmapFile) Allocate(maxSz int64) error {
+	return m.Truncate(maxSz)
+}

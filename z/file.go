@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"sync"
 
 	"github.com/pkg/errors"
 )
@@ -20,45 +20,32 @@ import (
 type MmapFile struct {
 	Data []byte
 	Fd   *os.File
+	mut  sync.RWMutex
+}
+
+// When run with thick provisioning, we cannot rely on
+// the filedescriptor size to determine the real size of our
+// mmapped file.
+func (m *MmapFile) SetSize(s uint32) {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+	binary.BigEndian.PutUint32(m.Data, s)
+}
+
+func (m *MmapFile) GetSize() uint32 {
+	m.mut.RLock()
+	defer m.mut.RUnlock()
+	return binary.BigEndian.Uint32(m.Data)
+}
+
+func (m *MmapFile) IncrementSizeBy(s uint32) {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+	existing := binary.BigEndian.Uint32(m.Data)
+	binary.BigEndian.PutUint32(m.Data, s+existing)
 }
 
 var NewFile = errors.New("Create a new file")
-
-func OpenMmapFileUsing(fd *os.File, sz int, writable bool) (*MmapFile, error) {
-	filename := fd.Name()
-	fi, err := fd.Stat()
-	if err != nil {
-		return nil, errors.Wrapf(err, "cannot stat file: %s", filename)
-	}
-
-	var rerr error
-	fileSize := fi.Size()
-	if sz > 0 && fileSize == 0 {
-		// If file is empty, truncate it to sz.
-		if err := fd.Truncate(int64(sz)); err != nil {
-			return nil, errors.Wrapf(err, "error while truncation")
-		}
-		fileSize = int64(sz)
-		rerr = NewFile
-	}
-
-	// fmt.Printf("Mmaping file: %s with writable: %v filesize: %d\n", fd.Name(), writable, fileSize)
-	buf, err := Mmap(fd, writable, fileSize) // Mmap up to file size.
-	if err != nil {
-		return nil, errors.Wrapf(err, "while mmapping %s with size: %d", fd.Name(), fileSize)
-	}
-
-	if fileSize == 0 {
-		dir, _ := filepath.Split(filename)
-		if err := SyncDir(dir); err != nil {
-			return nil, err
-		}
-	}
-	return &MmapFile{
-		Data: buf,
-		Fd:   fd,
-	}, rerr
-}
 
 // OpenMmapFile opens an existing file or creates a new file. If the file is
 // created, it would truncate the file to maxSz. In both cases, it would mmap

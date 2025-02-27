@@ -1,5 +1,5 @@
-//go:build fallocate
-// +build fallocate
+//go:build linux && fallocate
+// +build linux,fallocate
 
 /*
  * SPDX-FileCopyrightText: © Hypermode Inc. <hello@hypermode.com>
@@ -12,12 +12,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/pkg/errors"
 )
-
-
 
 func OpenMmapFileUsing(fd *os.File, sz int, writable bool) (*MmapFile, error) {
 	filename := fd.Name()
@@ -29,7 +28,7 @@ func OpenMmapFileUsing(fd *os.File, sz int, writable bool) (*MmapFile, error) {
 	var rerr error
 	fileSize := fi.Size()
 	if sz > 0 && fileSize == 0 {
-		// Allocate 
+		// Allocate
 		if err := syscall.Fallocate(int(fd.Fd()), 0, 0, int64(sz)); err != nil {
 			// if we return nil here, we leak an FD & don't release the space, release
 			// our resources so upstream can recover how they want.
@@ -56,10 +55,11 @@ func OpenMmapFileUsing(fd *os.File, sz int, writable bool) (*MmapFile, error) {
 	return &MmapFile{
 		Data: buf,
 		Fd:   fd,
+		mut:  sync.RWMutex{},
 	}, rerr
 }
- 
- // Allocate explicitly allocates the given size for our mmapped file
+
+// Allocate explicitly allocates the given size for our mmapped file
 func (m *MmapFile) Allocate(maxSz int64) error {
 	if err := m.Sync(); err != nil {
 		return fmt.Errorf("while sync file: %s, error: %v\n", m.Fd.Name(), err)
@@ -73,6 +73,22 @@ func (m *MmapFile) Allocate(maxSz int64) error {
 		return fmt.Errorf("while fallocate file: %s, error: %v\n", m.Fd.Name(), err)
 	}
 
+	m.Data, err = mremap(m.Data, int(maxSz)) // Mmap up to max size.
+	return err
+}
+
+// Truncate would truncate the mmapped file to the given size. On Linux, we truncate
+// the underlying file and then call mremap, but on other systems, we unmap first,
+// then truncate, then re-map.
+func (m *MmapFile) Truncate(maxSz int64) error {
+	if err := m.Sync(); err != nil {
+		return fmt.Errorf("while sync file: %s, error: %v\n", m.Fd.Name(), err)
+	}
+	if err := m.Fd.Truncate(maxSz); err != nil {
+		return fmt.Errorf("while truncate file: %s, error: %v\n", m.Fd.Name(), err)
+	}
+
+	var err error
 	m.Data, err = mremap(m.Data, int(maxSz)) // Mmap up to max size.
 	return err
 }
